@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://webhookmail.onrender.com/sitemap.xml

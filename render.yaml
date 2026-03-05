@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: webhookmail
+    runtime: docker
+    plan: free
+    envVars:
+      - key: RESEND_API_KEY
+        sync: false
+      - key: BASE_URL
+        value: https://webhookmail.onrender.com
