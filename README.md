@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="assets/logo-200.png" alt="WebhookMail" width="120">
-</p>
-
-<h1 align="center">WebhookMail</h1>
+<h1 align="center">⚡ WebhookMail</h1>
 
 <p align="center"><strong>Forward any webhook to your email inbox. Instant setup, no code required.</strong></p>
 
