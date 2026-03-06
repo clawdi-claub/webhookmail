@@ -1,13 +1,34 @@
-// Stripe integration for WebhookMail Pro ($3/mo)
-// Requires: STRIPE_SECRET_KEY, STRIPE_PRICE_ID, STRIPE_WEBHOOK_SECRET
+import { createHmac, timingSafeEqual } from 'crypto';
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const BASE_URL = process.env.BASE_URL || 'https://webhookmail.onrender.com';
+var STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+var STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+var BASE_URL = process.env.BASE_URL || 'https://webhookmail.onrender.com';
+
+function verifySignature(payload, sigHeader, secret) {
+  if (!secret || !sigHeader) return false;
+  var parts = {};
+  sigHeader.split(',').forEach(function(item) {
+    var kv = item.split('=');
+    if (kv[0] === 't') parts.t = kv[1];
+    if (kv[0] === 'v1' && !parts.v1) parts.v1 = kv[1];
+  });
+  if (!parts.t || !parts.v1) return false;
+  // Reject timestamps older than 5 minutes
+  var age = Math.floor(Date.now() / 1000) - parseInt(parts.t);
+  if (age > 300) return false;
+  var expected = createHmac('sha256', secret)
+    .update(parts.t + '.' + payload)
+    .digest('hex');
+  try {
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(parts.v1));
+  } catch (e) {
+    return false;
+  }
+}
 
 async function stripeRequest(path, method, body) {
-  const res = await fetch('https://api.stripe.com/v1' + path, {
-    method,
+  var res = await fetch('https://api.stripe.com/v1' + path, {
+    method: method,
     headers: {
       'Authorization': 'Bearer ' + STRIPE_SECRET_KEY,
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -31,28 +52,32 @@ export async function createCheckoutSession(endpointId, email, priceId) {
 }
 
 export async function handleWebhook(rawBody, signature) {
-  // Verify webhook signature using Stripe's method
-  // For now, parse the event directly (add signature verification in production)
-  const event = JSON.parse(rawBody);
+  if (STRIPE_WEBHOOK_SECRET) {
+    if (!verifySignature(rawBody, signature, STRIPE_WEBHOOK_SECRET)) {
+      console.error('Stripe webhook signature verification failed');
+      return { action: 'rejected', reason: 'invalid_signature' };
+    }
+  } else {
+    console.warn('STRIPE_WEBHOOK_SECRET not set — skipping signature verification (NOT SAFE FOR PRODUCTION)');
+  }
+
+  var event = JSON.parse(rawBody);
 
   switch (event.type) {
     case 'checkout.session.completed': {
-      const session = event.data.object;
-      const endpointId = session.metadata?.endpoint_id;
+      var session = event.data.object;
+      var endpointId = session.metadata ? session.metadata.endpoint_id : null;
       if (endpointId) {
-        return { action: 'upgrade', endpointId, customerId: session.customer, subscriptionId: session.subscription };
+        return { action: 'upgrade', endpointId: endpointId, customerId: session.customer, subscriptionId: session.subscription };
       }
       break;
     }
     case 'customer.subscription.deleted': {
-      const sub = event.data.object;
+      var sub = event.data.object;
       return { action: 'downgrade', subscriptionId: sub.id, customerId: sub.customer };
-      break;
     }
     case 'invoice.payment_failed': {
-      const invoice = event.data.object;
-      return { action: 'payment_failed', customerId: invoice.customer };
-      break;
+      return { action: 'payment_failed', customerId: event.data.object.customer };
     }
   }
   return { action: 'none' };

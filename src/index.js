@@ -5,9 +5,38 @@ import { nanoid } from 'nanoid';
 import db from './db.js';
 import { landingPage, dashboardPage } from './pages.js';
 import { createCheckoutSession, handleWebhook, isConfigured } from './stripe.js';
+import { rateLimit } from './ratelimit.js';
 
 const app = new Hono();
-app.use('*', cors());
+// Security headers
+app.use('*', async function(c, next) {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+});
+
+// CORS: only allow same-origin and webhook POSTs
+app.use('/api/*', cors({ origin: function(origin) { return origin || '*'; }, allowMethods: ['GET', 'POST'] }));
+app.use('/hook/*', cors());
+
+// Rate limits
+// Body size limit (1MB)
+app.use('*', async function(c, next) {
+  var cl = c.req.header('content-length');
+  if (cl && parseInt(cl) > 1048576) {
+    return c.json({ error: 'Request too large' }, 413);
+  }
+  await next();
+});
+
+app.use('/api/endpoints', rateLimit({ prefix: 'create', window: 3600000, max: 20, message: 'Too many endpoints created. Try again later.' }));
+app.use('/hook/*', rateLimit({ prefix: 'hook', window: 60000, max: 120, message: 'Rate limit exceeded.' }));
+app.use('/api/upgrade/*', rateLimit({ prefix: 'upgrade', window: 60000, max: 10, message: 'Too many requests.' }));
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FREE_LIMIT = 50;
@@ -47,7 +76,7 @@ app.get('/', (c) => c.html(landingPage()));
 // Create endpoint
 app.post('/api/endpoints', async (c) => {
   const { email, name } = await c.req.json();
-  if (!email || !email.includes('@')) {
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     return c.json({ error: 'Valid email required' }, 400);
   }
   const id = nanoid(12);
