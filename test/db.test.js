@@ -1,81 +1,66 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, rmSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { describe, it, expect } from 'vitest';
+import db from '../src/db.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEST_DB_PATH = join(__dirname, 'test.db');
+describe('Endpoint CRUD', () => {
+  var id = 'dbtest_' + Date.now();
 
-describe('Database operations', () => {
-  let db;
-
-  beforeAll(async () => {
-    process.env.DB_PATH = TEST_DB_PATH;
-    const dbModule = await import('../src/db.js');
-    db = dbModule.default;
+  it('creates endpoint', () => {
+    var r = db.createEndpoint(id, 'test@x.com', 'Test', new Date().toISOString());
+    expect(r.changes).toBe(1);
   });
 
-  afterAll(() => {
-    if (existsSync(TEST_DB_PATH)) {
-      rmSync(TEST_DB_PATH);
-    }
-    if (existsSync(TEST_DB_PATH + '-wal')) {
-      rmSync(TEST_DB_PATH + '-wal');
-    }
-    if (existsSync(TEST_DB_PATH + '-shm')) {
-      rmSync(TEST_DB_PATH + '-shm');
-    }
+  it('gets endpoint by id', () => {
+    var ep = db.getEndpoint(id);
+    expect(ep.email).toBe('test@x.com');
+    expect(ep.tier).toBe('free');
   });
 
-  it('should create endpoint', () => {
-    const id = 'test_endpoint_1';
-    const email = 'test@example.com';
-    const now = new Date().toISOString();
-    
-    const result = db.createEndpoint(id, email, 'Test Endpoint', now);
-    expect(result.changes).toBe(1);
+  it('sets auth token hash', () => {
+    db.setAuthTokenHash(id, 'abc123hash');
+    var ep = db.getEndpoint(id);
+    expect(ep.auth_token_hash).toBe('abc123hash');
   });
 
-  it('should get endpoint by id', () => {
-    const endpoint = db.getEndpoint('test_endpoint_1');
-    expect(endpoint).toBeDefined();
-    expect(endpoint.email).toBe('test@example.com');
+  it('logs webhook and increments count', () => {
+    db.logWebhook(id, 'POST', '{}', '{"test":1}', '1.2.3.4', new Date().toISOString());
+    var ep = db.getEndpoint(id);
+    expect(ep.webhook_count).toBe(1);
   });
 
-  it('should log webhook', () => {
-    const endpointId = 'test_endpoint_1';
-    const method = 'POST';
-    const headers = JSON.stringify({ 'Content-Type': 'application/json' });
-    const body = '{"event":"test"}';
-    const sourceIp = '127.0.0.1';
-    const now = new Date().toISOString();
-    
-    db.logWebhook(endpointId, method, headers, body, sourceIp, now);
-    expect(endpointId).toBeDefined();
+  it('gets logs', () => {
+    var logs = db.getLogs(id, 10);
+    expect(logs.length).toBe(1);
+    expect(logs[0].method).toBe('POST');
   });
 
-  it('should get logs for endpoint', () => {
-    const logs = db.getLogs('test_endpoint_1', 10);
-    expect(Array.isArray(logs)).toBe(true);
-    expect(logs.length).toBeGreaterThan(0);
+  it('gets monthly count', () => {
+    expect(db.getMonthlyCount(id)).toBeGreaterThan(0);
   });
 
-  it('should get monthly count', () => {
-    const count = db.getMonthlyCount('test_endpoint_1');
-    expect(typeof count).toBe('number');
-    expect(count).toBeGreaterThan(0);
+  it('upgrades tier', () => {
+    db.upgradeTier(id, 'pro', 'cus_1', 'sub_1');
+    expect(db.getEndpoint(id).tier).toBe('pro');
   });
 
-  it('should upgrade tier', () => {
-    db.upgradeTier('test_endpoint_1', 'pro', 'cus_test', 'sub_test');
-    const endpoint = db.getEndpoint('test_endpoint_1');
-    expect(endpoint.tier).toBe('pro');
-    expect(endpoint.stripe_customer_id).toBe('cus_test');
+  it('downgrades by subscription', () => {
+    db.downgradeBySubscription('sub_1');
+    expect(db.getEndpoint(id).tier).toBe('free');
+  });
+});
+
+describe('Event idempotency', () => {
+  var evtId = 'evt_dbtest_' + Date.now();
+
+  it('returns false for new event', () => {
+    expect(db.isEventProcessed(evtId)).toBe(false);
   });
 
-  it('should downgrade by subscription', () => {
-    db.downgradeBySubscription('sub_test');
-    const endpoint = db.getEndpoint('test_endpoint_1');
-    expect(endpoint.tier).toBe('free');
+  it('marks and detects processed event', () => {
+    db.markEventProcessed(evtId);
+    expect(db.isEventProcessed(evtId)).toBe(true);
+  });
+
+  it('handles duplicate mark gracefully', () => {
+    expect(() => db.markEventProcessed(evtId)).not.toThrow();
   });
 });

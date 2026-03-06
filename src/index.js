@@ -240,27 +240,32 @@ app.get('/upgrade/success', (c) => {
 
 // Stripe webhook handler
 app.post('/stripe/webhook', async (c) => {
-  const rawBody = await c.req.text();
-  const sig = c.req.header('stripe-signature');
-  const result = await handleWebhook(rawBody, sig);
+  try {
+    const rawBody = await c.req.text();
+    const sig = c.req.header('stripe-signature');
+    const result = await handleWebhook(rawBody, sig);
 
-  if (result.action === 'rejected') {
-    return c.json({ error: result.reason }, 400);
+    if (result.action === 'rejected') {
+      return c.json({ error: result.reason }, 400);
+    }
+
+    // Idempotency: skip already-processed events
+    if (result.eventId && db.isEventProcessed(result.eventId)) {
+      return c.json({ received: true, duplicate: true });
+    }
+
+    if (result.action === 'upgrade' && result.endpointId) {
+      db.upgradeTier(result.endpointId, 'pro', result.customerId, result.subscriptionId);
+    } else if (result.action === 'downgrade') {
+      db.downgradeBySubscription(result.subscriptionId);
+    }
+
+    if (result.eventId) db.markEventProcessed(result.eventId);
+    return c.json({ received: true });
+  } catch (err) {
+    console.error('Stripe webhook error:', err.message);
+    return c.json({ error: 'webhook_config_error', message: err.message }, 503);
   }
-
-  // Idempotency: skip already-processed events
-  if (result.eventId && db.isEventProcessed(result.eventId)) {
-    return c.json({ received: true, duplicate: true });
-  }
-
-  if (result.action === 'upgrade' && result.endpointId) {
-    db.upgradeTier(result.endpointId, 'pro', result.customerId, result.subscriptionId);
-  } else if (result.action === 'downgrade') {
-    db.downgradeBySubscription(result.subscriptionId);
-  }
-
-  if (result.eventId) db.markEventProcessed(result.eventId);
-  return c.json({ received: true });
 });
 
 const port = process.env.PORT || 3000;

@@ -1,2 +1,3 @@
 node_modules\ndata\n*.db
 assets/logo.png
+node_modules/
