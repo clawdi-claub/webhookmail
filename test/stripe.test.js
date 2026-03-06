@@ -56,6 +56,20 @@ describe('handleWebhook', () => {
     expect(result.action).toBe('upgrade');
     expect(result.endpointId).toBe('ep_test');
   });
+
+  it('returns payment_failed action on invoice.payment_failed', async () => {
+    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+    var body = JSON.stringify({
+      type: 'invoice.payment_failed',
+      id: 'evt_fail',
+      data: { object: { customer: 'cus_test' } }
+    });
+    var sig = makeSignature(body, 'whsec_test');
+    var result = await handleWebhook(body, sig);
+    expect(result.action).toBe('payment_failed');
+    expect(result.customerId).toBe('cus_test');
+    expect(result.eventId).toBe('evt_fail');
+  });
 });
 
 describe('isConfigured', () => {

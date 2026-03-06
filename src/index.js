@@ -9,6 +9,22 @@ import { createCheckoutSession, handleWebhook, isConfigured } from './stripe.js'
 import { rateLimit } from './ratelimit.js';
 
 const app = new Hono();
+
+// Request logging middleware
+app.use('*', async function(c, next) {
+  var start = Date.now();
+  await next();
+  if (process.env.NODE_ENV !== 'test') {
+    console.log('[%s] %s %s %sms %s',
+      new Date().toISOString(),
+      c.req.method,
+      c.req.path,
+      Date.now() - start,
+      c.res.status
+    );
+  }
+});
+
 // Security headers
 app.use('*', async function(c, next) {
   await next();
@@ -24,13 +40,14 @@ app.use('*', async function(c, next) {
 // CORS: restrict to same origin in production, open for hook receivers
 app.use('/api/*', cors({
   origin: function(origin) {
-    if (!origin) return BASE_URL;
-    if (origin === BASE_URL) return origin;
-    if (process.env.NODE_ENV !== 'production') return origin;
-    return BASE_URL;
+    if (!origin) return true; // Allow non-browser requests
+    if (origin === BASE_URL) return true;
+    if (process.env.NODE_ENV !== 'production') return true;
+    return false; // Explicitly deny other origins in production
   },
   allowMethods: ['GET', 'POST'],
 }));
+// Hook receivers MUST accept CORS from any origin (third-party webhooks from Stripe, GitHub, etc.)
 app.use('/hook/*', cors());
 
 // Rate limits
@@ -52,7 +69,12 @@ const FREE_LIMIT = 50;
 const BASE_URL = process.env.BASE_URL || 'https://webhookmail.onrender.com';
 
 function esc(s) {
-  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
 }
 
 function verifyAuthToken(endpoint, token) {
@@ -86,7 +108,20 @@ app.get('/sitemap.xml', (c) => {
   return c.body(xml, { headers: { 'Content-Type': 'application/xml' } });
 });
 
-app.get('/health', (c) => c.json({ status: 'ok', service: 'webhookmail' }));
+app.get('/health', (c) => {
+  var dbOk = true;
+  try { db.getEndpoint('healthcheck_dummy_id'); } catch (e) { dbOk = false; }
+  var stripeOk = !!(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRICE_ID && process.env.STRIPE_WEBHOOK_SECRET);
+  var resendOk = !!process.env.RESEND_API_KEY;
+  var allOk = dbOk && stripeOk && resendOk;
+  return c.json({
+    status: allOk ? 'ok' : 'degraded',
+    service: 'webhookmail',
+    db: dbOk ? 'ok' : 'error',
+    stripe: stripeOk ? 'configured' : 'unconfigured',
+    resend: resendOk ? 'configured' : 'unconfigured',
+  }, allOk ? 200 : 503);
+});
 
 app.get('/', (c) => c.html(landingPage()));
 
@@ -267,6 +302,12 @@ app.post('/stripe/webhook', async (c) => {
     return c.json({ error: 'webhook_config_error', message: err.message }, 503);
   }
 });
+
+// CRITICAL: Fail fast in production if Stripe webhook secret is missing
+if (process.env.NODE_ENV === 'production' && !process.env.STRIPE_WEBHOOK_SECRET) {
+  console.error('FATAL: STRIPE_WEBHOOK_SECRET not configured in production. Refusing to start.');
+  process.exit(1);
+}
 
 const port = process.env.PORT || 3000;
 serve({ fetch: app.fetch, port });
