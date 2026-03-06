@@ -52,35 +52,36 @@ export async function createCheckoutSession(endpointId, email, priceId) {
 }
 
 export async function handleWebhook(rawBody, signature) {
-  if (STRIPE_WEBHOOK_SECRET) {
-    if (!verifySignature(rawBody, signature, STRIPE_WEBHOOK_SECRET)) {
-      console.error('Stripe webhook signature verification failed');
-      return { action: 'rejected', reason: 'invalid_signature' };
-    }
-  } else {
-    console.warn('STRIPE_WEBHOOK_SECRET not set — skipping signature verification (NOT SAFE FOR PRODUCTION)');
+  if (!STRIPE_WEBHOOK_SECRET) {
+    console.error('STRIPE_WEBHOOK_SECRET not configured — rejecting webhook');
+    return { action: 'rejected', reason: 'webhook_secret_not_configured' };
+  }
+  if (!verifySignature(rawBody, signature, STRIPE_WEBHOOK_SECRET)) {
+    console.error('Stripe webhook signature verification failed');
+    return { action: 'rejected', reason: 'invalid_signature' };
   }
 
   var event = JSON.parse(rawBody);
+  var eventId = event.id || null;
 
   switch (event.type) {
     case 'checkout.session.completed': {
       var session = event.data.object;
       var endpointId = session.metadata ? session.metadata.endpoint_id : null;
       if (endpointId) {
-        return { action: 'upgrade', endpointId: endpointId, customerId: session.customer, subscriptionId: session.subscription };
+        return { action: 'upgrade', eventId: eventId, endpointId: endpointId, customerId: session.customer, subscriptionId: session.subscription };
       }
       break;
     }
     case 'customer.subscription.deleted': {
       var sub = event.data.object;
-      return { action: 'downgrade', subscriptionId: sub.id, customerId: sub.customer };
+      return { action: 'downgrade', eventId: eventId, subscriptionId: sub.id, customerId: sub.customer };
     }
     case 'invoice.payment_failed': {
-      return { action: 'payment_failed', customerId: event.data.object.customer };
+      return { action: 'payment_failed', eventId: eventId, customerId: event.data.object.customer };
     }
   }
-  return { action: 'none' };
+  return { action: 'none', eventId: eventId };
 }
 
 export function isConfigured() {

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
 import { nanoid } from 'nanoid';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import db from './db.js';
 import { landingPage, dashboardPage } from './pages.js';
 import { createCheckoutSession, handleWebhook, isConfigured } from './stripe.js';
@@ -20,8 +21,16 @@ app.use('*', async function(c, next) {
   }
 });
 
-// CORS: only allow same-origin and webhook POSTs
-app.use('/api/*', cors({ origin: function(origin) { return origin || '*'; }, allowMethods: ['GET', 'POST'] }));
+// CORS: restrict to same origin in production, open for hook receivers
+app.use('/api/*', cors({
+  origin: function(origin) {
+    if (!origin) return BASE_URL;
+    if (origin === BASE_URL) return origin;
+    if (process.env.NODE_ENV !== 'production') return origin;
+    return BASE_URL;
+  },
+  allowMethods: ['GET', 'POST'],
+}));
 app.use('/hook/*', cors());
 
 // Rate limits
@@ -44,6 +53,14 @@ const BASE_URL = process.env.BASE_URL || 'https://webhookmail.onrender.com';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function verifyAuthToken(endpoint, token) {
+  if (!endpoint.auth_token_hash || !token) return false;
+  var provided = createHash('sha256').update(token).digest('hex');
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(endpoint.auth_token_hash));
+  } catch (e) { return false; }
 }
 
 // Static files
@@ -81,12 +98,16 @@ app.post('/api/endpoints', async (c) => {
   }
   const id = nanoid(12);
   const now = new Date().toISOString();
+  const authToken = randomBytes(32).toString('hex');
+  const tokenHash = createHash('sha256').update(authToken).digest('hex');
   db.createEndpoint(id, email, name || 'My Webhook', now);
+  db.setAuthTokenHash(id, tokenHash);
   return c.json({
     id, email,
     name: name || 'My Webhook',
+    authToken: authToken,
     webhookUrl: BASE_URL + '/hook/' + id,
-    dashboardUrl: BASE_URL + '/dashboard/' + id,
+    dashboardUrl: BASE_URL + '/dashboard/' + id + '?token=' + authToken,
   });
 });
 
@@ -149,24 +170,33 @@ const hookHandler = async (c) => {
 
 app.all('/hook/:id', hookHandler);
 
-// Dashboard
+// Dashboard (requires auth token)
 app.get('/dashboard/:id', (c) => {
   const { id } = c.req.param();
   const endpoint = db.getEndpoint(id);
   if (!endpoint) return c.html('<h1>Not found</h1>', 404);
+  const token = c.req.query('token');
+  if (!verifyAuthToken(endpoint, token)) {
+    return c.html('<h1>Unauthorized</h1><p>Invalid or missing auth token.</p>', 401);
+  }
   const logs = db.getLogs(id, 50);
   const monthly = db.getMonthlyCount(id);
   return c.html(dashboardPage(endpoint, logs, monthly));
 });
 
-// API: endpoint info
+// API: endpoint info (requires auth token)
 app.get('/api/endpoints/:id', (c) => {
   const { id } = c.req.param();
   const endpoint = db.getEndpoint(id);
   if (!endpoint) return c.json({ error: 'Not found' }, 404);
+  const token = c.req.query('token');
+  if (!verifyAuthToken(endpoint, token)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const logs = db.getLogs(id, 20);
   const monthly = db.getMonthlyCount(id);
-  return c.json({ ...endpoint, logs, monthlyUsage: monthly, webhookUrl: BASE_URL + '/hook/' + id });
+  var safe = { id: endpoint.id, email: endpoint.email, name: endpoint.name, tier: endpoint.tier, webhook_count: endpoint.webhook_count, created_at: endpoint.created_at };
+  return c.json({ ...safe, logs, monthlyUsage: monthly, webhookUrl: BASE_URL + '/hook/' + id });
 });
 
 // Stripe: create checkout session
@@ -214,12 +244,22 @@ app.post('/stripe/webhook', async (c) => {
   const sig = c.req.header('stripe-signature');
   const result = await handleWebhook(rawBody, sig);
 
+  if (result.action === 'rejected') {
+    return c.json({ error: result.reason }, 400);
+  }
+
+  // Idempotency: skip already-processed events
+  if (result.eventId && db.isEventProcessed(result.eventId)) {
+    return c.json({ received: true, duplicate: true });
+  }
+
   if (result.action === 'upgrade' && result.endpointId) {
     db.upgradeTier(result.endpointId, 'pro', result.customerId, result.subscriptionId);
   } else if (result.action === 'downgrade') {
     db.downgradeBySubscription(result.subscriptionId);
   }
 
+  if (result.eventId) db.markEventProcessed(result.eventId);
   return c.json({ received: true });
 });
 

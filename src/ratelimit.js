@@ -15,8 +15,9 @@ export function rateLimit(opts) {
   var message = opts.message || 'Too many requests';
 
   return async function(c, next) {
-    var ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
-    ip = ip.split(',')[0].trim();
+    var xff = c.req.header('x-forwarded-for');
+    var ip = xff ? xff.split(',')[0].trim() : (c.req.header('x-real-ip') || 'unknown');
+    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
     var key = opts.prefix + ':' + ip;
     var now = Date.now();
 

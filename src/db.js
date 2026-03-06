@@ -16,10 +16,16 @@ db.exec(`
     email TEXT NOT NULL,
     name TEXT,
     tier TEXT DEFAULT 'free',
+    auth_token_hash TEXT,
     stripe_customer_id TEXT,
     stripe_subscription_id TEXT,
     webhook_count INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS processed_events (
+    event_id TEXT PRIMARY KEY,
+    processed_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS logs (
@@ -36,6 +42,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_logs_endpoint ON logs(endpoint_id);
   CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at);
 `);
+
+// Migration: add auth_token_hash if missing
+try { db.exec('ALTER TABLE endpoints ADD COLUMN auth_token_hash TEXT'); } catch (e) { /* already exists */ }
+
+// Cleanup old processed events every 60s (keep 24h)
+setInterval(function() {
+  var cutoff = new Date(Date.now() - 86400000).toISOString();
+  db.prepare('DELETE FROM processed_events WHERE processed_at < ?').run(cutoff);
+}, 60000);
 
 const stmts = {
   createEndpoint: db.prepare('INSERT INTO endpoints (id, email, name, created_at) VALUES (?, ?, ?, ?)'),
@@ -81,5 +96,14 @@ export default {
     firstOfMonth.setDate(1);
     firstOfMonth.setHours(0, 0, 0, 0);
     return stmts.getLogCount.get(endpointId, firstOfMonth.toISOString())?.count || 0;
-  }
+  },
+  setAuthTokenHash(id, hash) {
+    db.prepare('UPDATE endpoints SET auth_token_hash = ? WHERE id = ?').run(hash, id);
+  },
+  isEventProcessed(eventId) {
+    return !!db.prepare('SELECT 1 FROM processed_events WHERE event_id = ?').get(eventId);
+  },
+  markEventProcessed(eventId) {
+    db.prepare('INSERT OR IGNORE INTO processed_events (event_id, processed_at) VALUES (?, ?)').run(eventId, new Date().toISOString());
+  },
 };
