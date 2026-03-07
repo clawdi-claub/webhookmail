@@ -41,10 +41,4 @@ jobs:
       - name: Stop server
         run: pkill -f "node src/index.js" || true
 
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && github.event_name == 'push'
-    steps:
-      - name: Deploy to Render
-        run: curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+
