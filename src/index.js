@@ -312,4 +312,3 @@ if (process.env.NODE_ENV === 'production' && !process.env.STRIPE_WEBHOOK_SECRET)
 const port = process.env.PORT || 3000;
 serve({ fetch: app.fetch, port });
 console.log('WebhookMail running on port ' + port);
-// Trigger redeploy
