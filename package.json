@@ -19,6 +19,6 @@
   },
   "devDependencies": {
     "vitest": "^1.6.1",
-    "wait-on": "^8.0.3"
+    "wait-on": "^8.0.5"
   }
 }
