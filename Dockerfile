@@ -1,6 +1,6 @@
-FROM node:22-slim
+FROM node:22-alpine
 
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 COPY package*.json ./
