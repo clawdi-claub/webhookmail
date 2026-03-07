@@ -1,0 +1,3 @@
+WebhookMail running on port 3999
+[2026-03-06T22:35:06.449Z] GET / 5ms 200
+[2026-03-06T22:35:06.461Z] GET /dashboard/test123 1ms 404
