@@ -4,7 +4,8 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev && npm rebuild better-sqlite3 --build-from-source
+ENV npm_config_build_from_source=true
+RUN npm ci --omit=dev
 COPY . .
 RUN mkdir -p data static
 
