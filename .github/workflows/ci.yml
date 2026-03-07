@@ -33,6 +33,7 @@ jobs:
           RESEND_API_KEY: dummy
           STRIPE_SECRET_KEY: sk_test_dummy
           STRIPE_PRICE_ID: price_dummy
+          STRIPE_WEBHOOK_SECRET: whsec_test_dummy
 
       - name: Run integration tests
         run: TEST_PORT=3099 npm run test:integration
