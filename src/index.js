@@ -303,12 +303,11 @@ app.post('/stripe/webhook', async (c) => {
   }
 });
 
-// CRITICAL: Fail fast in production if Stripe webhook secret is missing
+// Warn if Stripe webhook secret is missing in production (Stripe features will be disabled)
 if (process.env.NODE_ENV === 'production' && !process.env.STRIPE_WEBHOOK_SECRET) {
-  console.error('FATAL: STRIPE_WEBHOOK_SECRET not configured in production. Refusing to start.');
-  process.exit(1);
+  console.warn('WARNING: STRIPE_WEBHOOK_SECRET not configured. Stripe features disabled.');
 }
 
 const port = process.env.PORT || 3000;
-serve({ fetch: app.fetch, port });
+serve({ fetch: app.fetch, port, hostname: '0.0.0.0' });
 console.log('WebhookMail running on port ' + port);

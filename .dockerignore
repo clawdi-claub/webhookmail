@@ -1,0 +1,10 @@
+node_modules
+data
+*.db
+.git
+test
+vitest.config.js
+MARKETING.md
+PRODUCTION-CHECKLIST.md
+REVIEW-CRIX.md
+assets
