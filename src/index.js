@@ -115,12 +115,12 @@ app.get('/health', (c) => {
   var resendOk = !!process.env.RESEND_API_KEY;
   var allOk = dbOk && stripeOk && resendOk;
   return c.json({
-    status: allOk ? 'ok' : 'degraded',
+    status: allOk ? 'ok' : (dbOk ? 'degraded' : 'error'),
     service: 'webhookmail',
     db: dbOk ? 'ok' : 'error',
     stripe: stripeOk ? 'configured' : 'unconfigured',
     resend: resendOk ? 'configured' : 'unconfigured',
-  }, allOk ? 200 : 503);
+  }, dbOk ? 200 : 503);
 });
 
 app.get('/', (c) => c.html(landingPage()));
